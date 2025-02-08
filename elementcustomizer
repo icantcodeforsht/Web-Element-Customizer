@@ -1,0 +1,493 @@
+// ==UserScript==
+// @name         Web Element Customizer
+// @namespace    http://tampermonkey.net/
+// @version      2.8.2
+// @description  Customize (beta) – iOS/macOS style UI with enhanced selection overlay and smooth transitions
+// @author        ChatGPT (but stupid)
+// @match        *://*/*
+// @grant        GM_addStyle
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    let selectedElement = null;
+    let allSelected = false;
+    let isWindowMoving = false;
+    let mouseX = 0;
+    let mouseY = 0;
+    let windowOffsetX = 0;
+    let windowOffsetY = 0;
+
+    GM_addStyle(`
+        /* Use Apple system fonts for a macOS feel */
+        body, input, select, button {
+            font-family: -apple-system, BlinkMacSystemFont, "San Francisco", "Helvetica Neue", Helvetica, Arial, sans-serif;
+        }
+
+        /* Custom Button – iOS/macOS style (rounded, minimal, light) */
+        #customButton {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 50px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.9);
+            color: #007aff;
+            border: none;
+            border-radius: 50%;
+            font-size: 28px;
+            text-align: center;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 10000;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #customButton:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        /* Control Window (Customize Menu) – macOS style glass panel */
+        #controlWindow {
+            display: none;
+            position: fixed;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%) scale(0.95);
+            width: 450px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+            backdrop-filter: blur(10px);
+            z-index: 10001;
+            color: #000;
+            opacity: 0;
+            transition: opacity 0.4s ease, transform 0.4s ease;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        #controlWindow.open {
+            display: block;
+            opacity: 1;
+            transform: translateX(-50%) scale(1);
+        }
+
+        /* Window Header – mimic macOS window controls */
+        .window-header {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 15px;
+            cursor: move;
+        }
+        .window-header div {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            transition: transform 0.2s ease;
+        }
+        .window-header .red { background-color: #ff5f57; }
+        .window-header .yellow { background-color: #ffbd2e; }
+        .window-header .green { background-color: #28c940; }
+        .window-header div:hover {
+            transform: scale(1.1);
+        }
+
+        /* Title Styling */
+        .title {
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 20px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        /* Scrollable Content */
+        .scrollable-content {
+            max-height: 60vh;
+            overflow-y: auto;
+            transition: transform 0.3s ease;
+        }
+        .scrollable-content:hover {
+            transform: translateY(-2px);
+        }
+
+        /* Input Group Styling – clean and subtle */
+        .input-group {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            background: rgba(240, 240, 240, 0.9);
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+            transition: background 0.3s ease;
+        }
+        .input-group:hover {
+            background: rgba(240, 240, 240, 1);
+        }
+        .input-group label {
+            font-size: 14px;
+            margin-bottom: 5px;
+            display: block;
+            color: #555;
+        }
+        .input-group input,
+        .input-group select,
+        .input-group button {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #fff;
+            color: #333;
+            font-size: 14px;
+            transition: background 0.3s ease, border 0.3s ease;
+        }
+        .input-group input:focus,
+        .input-group select:focus {
+            outline: none;
+            border-color: #007aff;
+        }
+        .input-group button:hover {
+            background: #007aff;
+            color: #fff;
+            cursor: pointer;
+        }
+
+        /* Selected Element Highlight – add a purple overlay similar to native selection */
+        .selected-element {
+            position: relative;
+            border: 2px solid rgba(128, 0, 128, 0.8);
+            box-shadow: 0 0 10px rgba(128, 0, 128, 0.7);
+            z-index: 9999;
+            /* Remove any previous background so the overlay shows clearly */
+            background: transparent;
+        }
+        .selected-element::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(128, 0, 128, 0.5); /* This creates the purple overlay */
+            pointer-events: none;
+            z-index: -1;
+        }
+    `);
+
+    // Create and append the custom button
+    const customButton = document.createElement('button');
+    customButton.id = 'customButton';
+    customButton.textContent = '+';
+    document.body.appendChild(customButton);
+
+    customButton.addEventListener('click', () => {
+        openCustomizationWindow();
+    });
+
+    function openCustomizationWindow() {
+        const domain = window.location.hostname;
+        const controlWindow = document.createElement('div');
+        controlWindow.id = 'controlWindow';
+        document.body.appendChild(controlWindow);
+
+        const windowHeader = document.createElement('div');
+        windowHeader.classList.add('window-header');
+        windowHeader.innerHTML = `
+            <div class="red"></div>
+            <div class="yellow"></div>
+            <div class="green"></div>
+        `;
+        controlWindow.appendChild(windowHeader);
+
+        const title = document.createElement('h2');
+        title.innerText = `Customize - ${domain}`;
+        title.classList.add('title');
+        controlWindow.appendChild(title);
+
+        const scrollableContent = document.createElement('div');
+        scrollableContent.classList.add('scrollable-content');
+        controlWindow.appendChild(scrollableContent);
+
+        // Expanded Font Family dropdown with many font options
+        scrollableContent.innerHTML = `
+            <div class="input-group">
+                <label for="colorInput">Text Color:</label>
+                <input type="color" id="colorInput">
+            </div>
+            <div class="input-group">
+                <label for="backgroundColorInput">Background Color:</label>
+                <input type="color" id="backgroundColorInput">
+            </div>
+            <div class="input-group">
+                <label for="fontInput">Font Family:</label>
+                <select id="fontInput">
+                    <option value="">Select Font</option>
+                    <option value="Arial, sans-serif">Arial</option>
+                    <option value="Helvetica, sans-serif">Helvetica</option>
+                    <option value="'Courier New', Courier, monospace">Courier New</option>
+                    <option value="Georgia, serif">Georgia</option>
+                    <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                    <option value="Verdana, sans-serif">Verdana</option>
+                    <option value="'Roboto', sans-serif">Roboto</option>
+                    <option value="'Open Sans', sans-serif">Open Sans</option>
+                    <option value="'Lato', sans-serif">Lato</option>
+                    <option value="'Montserrat', sans-serif">Montserrat</option>
+                    <option value="'Oswald', sans-serif">Oswald</option>
+                    <option value="'Raleway', sans-serif">Raleway</option>
+                    <option value="'Poppins', sans-serif">Poppins</option>
+                    <option value="'Futura', sans-serif">Futura</option>
+                    <option value="'Century Gothic', sans-serif">Century Gothic</option>
+                    <option value="'Tahoma', sans-serif">Tahoma</option>
+                    <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                    <option value="'Impact', sans-serif">Impact</option>
+                    <option value="'Comic Sans MS', cursive, sans-serif">Comic Sans MS</option>
+                    <option value="'Lucida Console', monospace">Lucida Console</option>
+                </select>
+            </div>
+            <div class="input-group">
+                <label for="textSizeInput">Text Size (px):</label>
+                <input type="number" id="textSizeInput" placeholder="Enter text size">
+            </div>
+            <div class="input-group">
+                <label for="borderRadiusInput">Border Radius (px):</label>
+                <input type="number" id="borderRadiusInput" placeholder="Enter border radius">
+            </div>
+            <div class="input-group">
+                <label for="imageInput">Replace with Image:</label>
+                <input type="file" id="imageInput" accept="image/*">
+            </div>
+            <div class="input-group">
+                <label for="backgroundImageInput">Background Image (URL):</label>
+                <input type="text" id="backgroundImageInput" placeholder="Enter image URL">
+            </div>
+            <div class="input-group">
+                <label for="shadowHorizontalInput">Horizontal Offset (px):</label>
+                <input type="number" id="shadowHorizontalInput" placeholder="Enter horizontal offset">
+            </div>
+            <div class="input-group">
+                <label for="shadowVerticalInput">Vertical Offset (px):</label>
+                <input type="number" id="shadowVerticalInput" placeholder="Enter vertical offset">
+            </div>
+            <div class="input-group">
+                <label for="shadowBlurInput">Blur Radius (px):</label>
+                <input type="number" id="shadowBlurInput" placeholder="Enter blur radius">
+            </div>
+            <div class="input-group">
+                <label for="shadowColorInput">Shadow Color:</label>
+                <input type="color" id="shadowColorInput">
+            </div>
+            <div class="input-group">
+                <label for="opacityInput">Element Opacity (0-1):</label>
+                <input type="number" id="opacityInput" step="0.1" min="0" max="1" placeholder="Opacity">
+            </div>
+            <div class="input-group">
+                <label for="deleteElementInput">Delete Element:</label>
+                <button id="deleteElementButton">Delete Selected Element</button>
+            </div>
+            <div class="input-group">
+                <label for="refreshElementButton">Refresh Element:</label>
+                <button id="refreshElementButton">Refresh Selected Element</button>
+            </div>
+            <div class="input-group">
+                <label for="youtubeLinkInput">Replace with YouTube Video:</label>
+                <input type="text" id="youtubeLinkInput" placeholder="Enter YouTube video link">
+            </div>
+        `;
+
+        // Header control buttons
+        windowHeader.querySelector('.red').addEventListener('click', () => {
+            controlWindow.remove();
+        });
+        windowHeader.querySelector('.yellow').addEventListener('click', () => {
+            if (selectedElement) {
+                resetElement(selectedElement);
+            }
+        });
+        windowHeader.querySelector('.green').addEventListener('click', () => {
+            if (allSelected) {
+                deselectAllElements();
+            } else {
+                selectAllElements();
+            }
+            allSelected = !allSelected;
+        });
+
+        document.querySelector('#deleteElementButton').addEventListener('click', () => {
+            if (selectedElement) {
+                selectedElement.remove();
+                selectedElement = null;
+            }
+        });
+        document.querySelector('#refreshElementButton').addEventListener('click', () => {
+            if (selectedElement) {
+                resetElement(selectedElement);
+            }
+        });
+        document.querySelector('#youtubeLinkInput').addEventListener('input', function() {
+            if (selectedElement && this.value) {
+                const youtubeURL = this.value;
+                const videoId = youtubeURL.split('v=')[1].split('&')[0];
+                const iframe = document.createElement('iframe');
+                iframe.src = `https://www.youtube.com/embed/${videoId}`;
+                iframe.style.width = '100%';
+                iframe.style.height = '100%';
+                iframe.style.border = 'none';
+                selectedElement.innerHTML = ''; // Clear current content
+                selectedElement.appendChild(iframe);
+            }
+        });
+
+        setupCustomizationListeners(controlWindow);
+        controlWindow.classList.add('open');
+
+        // Make the control window draggable
+        const header = windowHeader;
+        header.addEventListener('mousedown', startMovingWindow);
+        window.addEventListener('mousemove', moveWindow);
+        window.addEventListener('mouseup', stopMovingWindow);
+
+        function startMovingWindow(e) {
+            isWindowMoving = true;
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+            windowOffsetX = controlWindow.offsetLeft;
+            windowOffsetY = controlWindow.offsetTop;
+        }
+        function moveWindow(e) {
+            if (isWindowMoving) {
+                const dx = e.clientX - mouseX;
+                const dy = e.clientY - mouseY;
+                controlWindow.style.left = `${windowOffsetX + dx}px`;
+                controlWindow.style.top = `${windowOffsetY + dy}px`;
+            }
+        }
+        function stopMovingWindow() {
+            isWindowMoving = false;
+        }
+    }
+
+    function setupCustomizationListeners(controlWindow) {
+        controlWindow.querySelector('#colorInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.color = this.value;
+            }
+        });
+        controlWindow.querySelector('#backgroundColorInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.backgroundColor = this.value;
+            }
+        });
+        controlWindow.querySelector('#fontInput').addEventListener('change', function() {
+            if (selectedElement) {
+                selectedElement.style.fontFamily = this.value;
+            }
+        });
+        controlWindow.querySelector('#textSizeInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.fontSize = `${this.value}px`;
+            }
+        });
+        controlWindow.querySelector('#borderRadiusInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.borderRadius = `${this.value}px`;
+            }
+        });
+        controlWindow.querySelector('#backgroundImageInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.backgroundImage = `url(${this.value})`;
+            }
+        });
+        controlWindow.querySelector('#shadowHorizontalInput').addEventListener('input', function() {
+            if (selectedElement) {
+                let parts = selectedElement.style.boxShadow.split(' ');
+                if(parts.length >= 4) {
+                    selectedElement.style.boxShadow = `${this.value}px ${parts[1]} ${parts[2]} ${parts[3]}`;
+                }
+            }
+        });
+        controlWindow.querySelector('#shadowVerticalInput').addEventListener('input', function() {
+            if (selectedElement) {
+                let parts = selectedElement.style.boxShadow.split(' ');
+                if(parts.length >= 4) {
+                    selectedElement.style.boxShadow = `${parts[0]} ${this.value}px ${parts[2]} ${parts[3]}`;
+                }
+            }
+        });
+        controlWindow.querySelector('#shadowBlurInput').addEventListener('input', function() {
+            if (selectedElement) {
+                let parts = selectedElement.style.boxShadow.split(' ');
+                if(parts.length >= 4) {
+                    selectedElement.style.boxShadow = `${parts[0]} ${parts[1]} ${this.value}px ${parts[3]}`;
+                }
+            }
+        });
+        controlWindow.querySelector('#shadowColorInput').addEventListener('input', function() {
+            if (selectedElement) {
+                let parts = selectedElement.style.boxShadow.split(' ');
+                if(parts.length >= 4) {
+                    selectedElement.style.boxShadow = `${parts[0]} ${parts[1]} ${parts[2]} ${this.value}`;
+                }
+            }
+        });
+        controlWindow.querySelector('#opacityInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.opacity = this.value;
+            }
+        });
+    }
+
+    // Improved Middle-Click Selection Logic:
+    // When you middle-click an element, if it is already selected, it toggles off.
+    // Otherwise, it deselects any previously selected element and applies the .selected-element class,
+    // which now adds a purple overlay (via a ::before pseudo-element) over the selected element.
+    document.addEventListener('mousedown', function(event) {
+        if (event.button === 1) { // Middle-click
+            const target = event.target;
+            if (target.classList.contains('selected-element')) {
+                target.classList.remove('selected-element');
+                if (selectedElement === target) {
+                    selectedElement = null;
+                }
+            } else {
+                if (selectedElement) {
+                    selectedElement.classList.remove('selected-element');
+                }
+                selectedElement = target;
+                selectedElement.classList.add('selected-element');
+            }
+        }
+    });
+
+    function resetElement(element) {
+        element.style.color = '';
+        element.style.backgroundColor = '';
+        element.style.fontFamily = '';
+        element.style.fontSize = '';
+        element.style.borderRadius = '';
+        element.style.boxShadow = '';
+        element.style.opacity = '';
+        element.style.backgroundImage = '';
+    }
+
+    function deselectAllElements() {
+        const elements = document.querySelectorAll('.selected-element');
+        elements.forEach(element => {
+            element.classList.remove('selected-element');
+        });
+        selectedElement = null;
+    }
+
+    function selectAllElements() {
+        const allElements = document.querySelectorAll('*');
+        allElements.forEach(element => {
+            element.classList.add('selected-element');
+        });
+        selectedElement = null;
+    }
+})();
