@@ -1,0 +1,719 @@
+// ==UserScript==
+// @name         Web Element Customizer (iPad Friendly)
+// @namespace    http://tampermonkey.net/
+// @version      2.9.7
+// @description  Customize (beta) – iOS/macOS style UI with enhanced selection overlay, smooth transitions, iPad‑friendly interactions, scaling, a settings (help) mode, and text‐shadow offset functionality.  
+// @author       ChatGPT
+// @match        *://*/*
+// @grant        GM_addStyle
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    let selectedElement = null;
+    let allSelected = false;
+    let isWindowMoving = false;
+    let mouseX = 0;
+    let mouseY = 0;
+    let windowOffsetX = 0;
+    let windowOffsetY = 0;
+    let inSettingsMode = false;  // NEW: flag to indicate if settings mode is active
+
+    GM_addStyle(`
+        /* Use Apple system fonts for a macOS feel */
+        body, input, select, button {
+            font-family: -apple-system, BlinkMacSystemFont, "San Francisco", "Helvetica Neue", Helvetica, Arial, sans-serif;
+        }
+
+        /* Custom Button – iOS/macOS style (rounded, minimal, light) */
+        #customButton {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 50px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.9);
+            color: #007aff;
+            border: none;
+            border-radius: 50%;
+            font-size: 28px;
+            text-align: center;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 10000;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        #customButton:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+
+        /* Control Window (Customize Menu) – macOS style glass panel */
+        #controlWindow {
+            display: none;
+            position: fixed;
+            top: 50px;
+            left: 50%;
+            transform: translateX(-50%) scale(0.95);
+            width: 450px;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.8);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+            backdrop-filter: blur(10px);
+            z-index: 10001;
+            color: #000;
+            opacity: 0;
+            transition: opacity 0.4s ease, transform 0.4s ease;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        #controlWindow.open {
+            display: block;
+            opacity: 1;
+            transform: translateX(-50%) scale(1);
+        }
+
+        /* Window Header – mimic macOS window controls */
+        .window-header {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 15px;
+            cursor: move;
+        }
+        .window-header div {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            transition: transform 0.2s ease;
+        }
+        .window-header .red { background-color: #ff5f57; }
+        .window-header .yellow { background-color: #ffbd2e; }
+        .window-header .green { background-color: #28c940; }
+        .window-header div:hover {
+            transform: scale(1.1);
+        }
+
+        /* Title Styling */
+        .title {
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 20px;
+            font-weight: 500;
+            color: #333;
+        }
+
+        /* Scrollable Content */
+        .scrollable-content {
+            max-height: 60vh;
+            overflow-y: auto;
+            transition: transform 0.3s ease;
+        }
+        .scrollable-content:hover {
+            transform: translateY(-2px);
+        }
+
+        /* Input Group Styling – clean and subtle */
+        .input-group {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            background: rgba(240, 240, 240, 0.9);
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+            transition: background 0.3s ease;
+        }
+        .input-group:hover {
+            background: rgba(240, 240, 240, 1);
+        }
+        .input-group label {
+            font-size: 14px;
+            margin-bottom: 5px;
+            display: block;
+            color: #555;
+        }
+        .input-group input,
+        .input-group select,
+        .input-group button {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            background: #fff;
+            color: #333;
+            font-size: 14px;
+            transition: background 0.3s ease, border 0.3s ease;
+        }
+        .input-group input:focus,
+        .input-group select:focus {
+            outline: none;
+            border-color: #007aff;
+        }
+        .input-group button:hover {
+            background: #007aff;
+            color: #fff;
+            cursor: pointer;
+        }
+
+        /* Selected Element Highlight – add a purple overlay similar to native selection */
+        .selected-element {
+            position: relative;
+            border: 2px solid rgba(128, 0, 128, 0.8);
+            box-shadow: 0 0 10px rgba(128, 0, 128, 0.7);
+            z-index: 9999;
+            background: transparent;
+        }
+        .selected-element::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(128, 0, 128, 0.5);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        /* iPad / Touch Device adjustments */
+        @media (pointer: coarse) {
+            #customButton {
+                width: 70px;
+                height: 70px;
+                font-size: 32px;
+                bottom: 30px;
+                right: 30px;
+            }
+            #controlWindow {
+                width: 90%;
+                max-width: 600px;
+                padding: 30px;
+            }
+            .title {
+                font-size: 24px;
+            }
+            .input-group label {
+                font-size: 16px;
+            }
+            .input-group input,
+            .input-group select,
+            .input-group button {
+                font-size: 18px;
+                padding: 12px;
+            }
+        }
+    `);
+
+    // Create and append the custom button
+    const customButton = document.createElement('button');
+    customButton.id = 'customButton';
+    customButton.textContent = '+';
+    document.body.appendChild(customButton);
+
+    // NEW: Modified event listener to toggle the customize menu.
+    customButton.addEventListener('click', () => {
+        if (document.getElementById('controlWindow')) {
+            // If the menu is already open, close it.
+            document.getElementById('controlWindow').remove();
+        } else {
+            // Otherwise, open the customization menu.
+            openCustomizationWindow();
+        }
+    });
+
+    function openCustomizationWindow() {
+        const domain = window.location.hostname;
+        const controlWindow = document.createElement('div');
+        controlWindow.id = 'controlWindow';
+        document.body.appendChild(controlWindow);
+
+        const windowHeader = document.createElement('div');
+        windowHeader.classList.add('window-header');
+        windowHeader.innerHTML = `
+            <div class="red"></div>
+            <div class="yellow"></div>
+            <div class="green"></div>
+        `;
+        controlWindow.appendChild(windowHeader);
+
+        const title = document.createElement('h2');
+        title.innerText = `Customize - ${domain}`;
+        title.classList.add('title');
+        controlWindow.appendChild(title);
+
+        const scrollableContent = document.createElement('div');
+        scrollableContent.classList.add('scrollable-content');
+        controlWindow.appendChild(scrollableContent);
+
+        // Expanded UI options with new "Scale" input group added
+        scrollableContent.innerHTML = `
+            <div class="input-group">
+                <label for="colorInput">Text Color:</label>
+                <input type="color" id="colorInput">
+            </div>
+            <div class="input-group">
+                <label for="backgroundColorInput">Background Color:</label>
+                <input type="color" id="backgroundColorInput">
+            </div>
+            <div class="input-group">
+                <label for="fontInput">Font Family:</label>
+                <select id="fontInput">
+                    <option value="">Select Font</option>
+                    <option value="Arial, sans-serif">Arial</option>
+                    <option value="Helvetica, sans-serif">Helvetica</option>
+                    <option value="'Courier New', Courier, monospace">Courier New</option>
+                    <option value="Georgia, serif">Georgia</option>
+                    <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                    <option value="Verdana, sans-serif">Verdana</option>
+                    <option value="'Roboto', sans-serif">Roboto</option>
+                    <option value="'Open Sans', sans-serif">Open Sans</option>
+                    <option value="'Lato', sans-serif">Lato</option>
+                    <option value="'Montserrat', sans-serif">Montserrat</option>
+                    <option value="'Oswald', sans-serif">Oswald</option>
+                    <option value="'Raleway', sans-serif">Raleway</option>
+                    <option value="'Poppins', sans-serif">Poppins</option>
+                    <option value="'Futura', sans-serif">Futura</option>
+                    <option value="'Century Gothic', sans-serif">Century Gothic</option>
+                    <option value="'Tahoma', sans-serif">Tahoma</option>
+                    <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                    <option value="'Impact', sans-serif">Impact</option>
+                    <option value="'Comic Sans MS', cursive, sans-serif">Comic Sans MS</option>
+                    <option value="'Lucida Console', monospace">Lucida Console</option>
+                </select>
+            </div>
+            <div class="input-group">
+                <label for="textSizeInput">Text Size (px):</label>
+                <input type="number" id="textSizeInput" placeholder="Enter text size">
+            </div>
+            <div class="input-group">
+                <label for="borderRadiusInput">Border Radius (px):</label>
+                <input type="number" id="borderRadiusInput" placeholder="Enter border radius">
+            </div>
+            <div class="input-group">
+                <label for="scaleInput">Scale:</label>
+                <input type="number" id="scaleInput" step="0.1" placeholder="Enter scale factor (e.g., 1, 1.5)">
+            </div>
+            <div class="input-group">
+                <label for="imageInput">Replace with Image (Upload):</label>
+                <input type="file" id="imageInput" accept="image/*">
+            </div>
+            <div class="input-group">
+                <label for="backgroundImageInput">Replace with Image (URL):</label>
+                <input type="text" id="backgroundImageInput" placeholder="Enter image URL">
+            </div>
+            <div class="input-group">
+                <label for="shadowHorizontalInput">Shadow Horizontal Offset (px):</label>
+                <input type="number" id="shadowHorizontalInput" placeholder="Enter horizontal offset">
+            </div>
+            <div class="input-group">
+                <label for="shadowVerticalInput">Shadow Vertical Offset (px):</label>
+                <input type="number" id="shadowVerticalInput" placeholder="Enter vertical offset">
+            </div>
+            <div class="input-group">
+                <label for="shadowBlurInput">Shadow Blur Radius (px):</label>
+                <input type="number" id="shadowBlurInput" placeholder="Enter blur radius">
+            </div>
+            <div class="input-group">
+                <label for="shadowColorInput">Shadow Color:</label>
+                <input type="color" id="shadowColorInput">
+            </div>
+            <div class="input-group">
+                <label for="opacityInput">Element Opacity (0-1):</label>
+                <input type="number" id="opacityInput" step="0.1" min="0" max="1" placeholder="Opacity">
+            </div>
+            <div class="input-group">
+                <label for="deleteElementInput">Delete Element:</label>
+                <button id="deleteElementButton">Delete Selected Element</button>
+            </div>
+            <div class="input-group">
+                <label for="refreshElementButton">Refresh Element:</label>
+                <button id="refreshElementButton">Refresh Selected Element</button>
+            </div>
+            <div class="input-group">
+                <label for="youtubeLinkInput">Replace with YouTube Video:</label>
+                <input type="text" id="youtubeLinkInput" placeholder="Enter YouTube video link">
+            </div>
+        `;
+        // Save the full customization UI HTML so it can be restored when exiting settings mode
+        const customizationUIHTML = scrollableContent.innerHTML;
+
+        // Header control buttons
+        // Red button always closes the control window.
+        windowHeader.querySelector('.red').addEventListener('click', () => {
+            controlWindow.remove();
+        });
+        // Yellow button: In normal mode, it resets every change by reloading the page.
+        // In settings mode it acts as a back button.
+        windowHeader.querySelector('.yellow').addEventListener('click', function() {
+            if (inSettingsMode) {
+                exitSettingsMode(controlWindow, windowHeader, scrollableContent, customizationUIHTML);
+            } else {
+                location.reload();
+            }
+        });
+        // Green button now opens the settings mode if not already in settings mode.
+        windowHeader.querySelector('.green').addEventListener('click', () => {
+            if (!inSettingsMode) {
+                enterSettingsMode(controlWindow, windowHeader, scrollableContent, customizationUIHTML);
+            }
+        });
+
+        document.querySelector('#deleteElementButton').addEventListener('click', () => {
+            if (selectedElement) {
+                selectedElement.remove();
+                selectedElement = null;
+            }
+        });
+        document.querySelector('#refreshElementButton').addEventListener('click', () => {
+            if (selectedElement) {
+                resetElement(selectedElement);
+            }
+        });
+        document.querySelector('#youtubeLinkInput').addEventListener('input', function() {
+            if (selectedElement && this.value) {
+                const youtubeURL = this.value;
+                const videoId = youtubeURL.split('v=')[1]?.split('&')[0];
+                if (videoId) {
+                    const iframe = document.createElement('iframe');
+                    iframe.src = `https://www.youtube.com/embed/${videoId}`;
+                    iframe.style.width = '100%';
+                    iframe.style.height = '100%';
+                    iframe.style.border = 'none';
+                    selectedElement.innerHTML = ''; // Clear current content
+                    selectedElement.appendChild(iframe);
+                }
+            }
+        });
+
+        // NEW: Replace with Image (Upload) functionality
+        controlWindow.querySelector('#imageInput').addEventListener('change', function() {
+            if (selectedElement && this.files && this.files[0]) {
+                const file = this.files[0];
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    img.style.width = '100%';
+                    img.style.height = 'auto';
+                    selectedElement.innerHTML = ''; // Clear current content
+                    selectedElement.appendChild(img);
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+        // NEW: Replace with Image (URL) functionality – listen to both input and change events and set extra styles
+        controlWindow.querySelector('#backgroundImageInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.backgroundImage = `url(${this.value})`;
+                selectedElement.style.backgroundSize = 'cover';
+                selectedElement.style.backgroundPosition = 'center';
+            }
+        });
+        controlWindow.querySelector('#backgroundImageInput').addEventListener('change', function() {
+            if (selectedElement) {
+                selectedElement.style.backgroundImage = `url(${this.value})`;
+                selectedElement.style.backgroundSize = 'cover';
+                selectedElement.style.backgroundPosition = 'center';
+            }
+        });
+
+        setupCustomizationListeners(controlWindow);
+        controlWindow.classList.add('open');
+
+        // Make the control window draggable (for mouse)
+        const header = windowHeader;
+        header.addEventListener('mousedown', startMovingWindow);
+        window.addEventListener('mousemove', moveWindow);
+        window.addEventListener('mouseup', stopMovingWindow);
+
+        // ...and draggable for touch devices
+        header.addEventListener('touchstart', startMovingWindowTouch);
+        header.addEventListener('touchmove', moveWindowTouch);
+        header.addEventListener('touchend', stopMovingWindowTouch);
+
+        function startMovingWindow(e) {
+            isWindowMoving = true;
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+            windowOffsetX = controlWindow.offsetLeft;
+            windowOffsetY = controlWindow.offsetTop;
+        }
+        function moveWindow(e) {
+            if (isWindowMoving) {
+                const dx = e.clientX - mouseX;
+                const dy = e.clientY - mouseY;
+                controlWindow.style.left = `${windowOffsetX + dx}px`;
+                controlWindow.style.top = `${windowOffsetY + dy}px`;
+            }
+        }
+        function stopMovingWindow() {
+            isWindowMoving = false;
+        }
+        function startMovingWindowTouch(e) {
+            isWindowMoving = true;
+            const touch = e.touches[0];
+            mouseX = touch.clientX;
+            mouseY = touch.clientY;
+            windowOffsetX = controlWindow.offsetLeft;
+            windowOffsetY = controlWindow.offsetTop;
+        }
+        function moveWindowTouch(e) {
+            if (isWindowMoving) {
+                const touch = e.touches[0];
+                const dx = touch.clientX - mouseX;
+                const dy = touch.clientY - mouseY;
+                controlWindow.style.left = `${windowOffsetX + dx}px`;
+                controlWindow.style.top = `${windowOffsetY + dy}px`;
+                e.preventDefault(); // Prevent scrolling while dragging
+            }
+        }
+        function stopMovingWindowTouch() {
+            isWindowMoving = false;
+        }
+    }
+
+    function setupCustomizationListeners(controlWindow) {
+        controlWindow.querySelector('#colorInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.color = this.value;
+            }
+        });
+        controlWindow.querySelector('#backgroundColorInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.backgroundColor = this.value;
+            }
+        });
+        controlWindow.querySelector('#fontInput').addEventListener('change', function() {
+            if (selectedElement) {
+                selectedElement.style.fontFamily = this.value;
+            }
+        });
+        controlWindow.querySelector('#textSizeInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.fontSize = `${this.value}px`;
+            }
+        });
+        controlWindow.querySelector('#borderRadiusInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.borderRadius = `${this.value}px`;
+            }
+        });
+        // NEW: Scale functionality – use the new updateScale function.
+        // Added both "input" and "change" event listeners for better iPad support.
+        controlWindow.querySelector('#scaleInput').addEventListener('input', function() {
+            updateScale(this.value);
+        });
+        controlWindow.querySelector('#scaleInput').addEventListener('change', function() {
+            updateScale(this.value);
+        });
+        controlWindow.querySelector('#backgroundImageInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.backgroundImage = `url(${this.value})`;
+                selectedElement.style.backgroundSize = 'cover';
+                selectedElement.style.backgroundPosition = 'center';
+            }
+        });
+        // NEW: Instead of using boxShadow, update textShadow to add an offset replica of the text.
+        function updateTextShadow() {
+            if (selectedElement) {
+                const horizontal = controlWindow.querySelector('#shadowHorizontalInput').value || 0;
+                const vertical = controlWindow.querySelector('#shadowVerticalInput').value || 0;
+                const blur = controlWindow.querySelector('#shadowBlurInput').value || 0;
+                const color = controlWindow.querySelector('#shadowColorInput').value || 'rgba(0,0,0,0)';
+                selectedElement.style.textShadow = `${horizontal}px ${vertical}px ${blur}px ${color}`;
+            }
+        }
+        controlWindow.querySelector('#shadowHorizontalInput').addEventListener('input', function() {
+            if (selectedElement) {
+                updateTextShadow();
+            }
+        });
+        controlWindow.querySelector('#shadowVerticalInput').addEventListener('input', function() {
+            if (selectedElement) {
+                updateTextShadow();
+            }
+        });
+        controlWindow.querySelector('#shadowBlurInput').addEventListener('input', function() {
+            if (selectedElement) {
+                updateTextShadow();
+            }
+        });
+        controlWindow.querySelector('#shadowColorInput').addEventListener('input', function() {
+            if (selectedElement) {
+                updateTextShadow();
+            }
+        });
+        // Also add "change" event listeners for robustness
+        controlWindow.querySelector('#shadowHorizontalInput').addEventListener('change', function() {
+            if (selectedElement) {
+                updateTextShadow();
+            }
+        });
+        controlWindow.querySelector('#shadowVerticalInput').addEventListener('change', function() {
+            if (selectedElement) {
+                updateTextShadow();
+            }
+        });
+        controlWindow.querySelector('#shadowBlurInput').addEventListener('change', function() {
+            if (selectedElement) {
+                updateTextShadow();
+            }
+        });
+        controlWindow.querySelector('#shadowColorInput').addEventListener('change', function() {
+            if (selectedElement) {
+                updateTextShadow();
+            }
+        });
+        controlWindow.querySelector('#opacityInput').addEventListener('input', function() {
+            if (selectedElement) {
+                selectedElement.style.opacity = this.value;
+            }
+        });
+    }
+
+    // NEW: Helper function to update the scale value without overwriting other transform values.
+    function updateScale(newScale) {
+        if (selectedElement) {
+            let currentTransform = selectedElement.style.transform || "";
+            // Check if there is an existing scale() in the transform and replace it
+            if (currentTransform.match(/scale\([^)]+\)/)) {
+                currentTransform = currentTransform.replace(/scale\([^)]+\)/, `scale(${newScale})`);
+            } else {
+                currentTransform += ` scale(${newScale})`;
+            }
+            selectedElement.style.transform = currentTransform.trim();
+        }
+    }
+
+    // Helper function to safely get or set default box-shadow parts (retained as requested)
+    function getBoxShadowParts(element) {
+        if (element.style.boxShadow && element.style.boxShadow.trim() !== '') {
+            let parts = element.style.boxShadow.split(' ');
+            if(parts.length >= 4) {
+                return parts;
+            }
+        }
+        return ['0px', '0px', '0px', 'rgba(0,0,0,0)'];
+    }
+
+    // Element selection logic:
+    // When the customization menu is open, any click (or touchend) outside the menu/custom button selects or deselects that element.
+    document.addEventListener('mousedown', function(event) {
+        const controlWindow = document.getElementById('controlWindow');
+        if (controlWindow && controlWindow.classList.contains('open') &&
+            !controlWindow.contains(event.target) &&
+            !customButton.contains(event.target)) {
+            if (selectedElement === event.target) {
+                selectedElement.classList.remove('selected-element');
+                selectedElement = null;
+            } else {
+                if (selectedElement) {
+                    selectedElement.classList.remove('selected-element');
+                }
+                selectedElement = event.target;
+                selectedElement.classList.add('selected-element');
+            }
+            event.preventDefault();
+            event.stopPropagation();
+        } else if (event.button === 1) { // Middle-click (for desktop when menu is not open)
+            const target = event.target;
+            if (target.classList.contains('selected-element')) {
+                target.classList.remove('selected-element');
+                if (selectedElement === target) {
+                    selectedElement = null;
+                }
+            } else {
+                if (selectedElement) {
+                    selectedElement.classList.remove('selected-element');
+                }
+                selectedElement = target;
+                selectedElement.classList.add('selected-element');
+            }
+        }
+    });
+
+    // Touch support for selecting/deselecting an element when the menu is open (for iPad)
+    document.addEventListener('touchend', function(event) {
+        const controlWindow = document.getElementById('controlWindow');
+        if (controlWindow && controlWindow.classList.contains('open') &&
+            !controlWindow.contains(event.target) &&
+            !customButton.contains(event.target)) {
+            if (selectedElement === event.target) {
+                selectedElement.classList.remove('selected-element');
+                selectedElement = null;
+            } else {
+                if (selectedElement) {
+                    selectedElement.classList.remove('selected-element');
+                }
+                selectedElement = event.target;
+                selectedElement.classList.add('selected-element');
+            }
+            event.preventDefault();
+            event.stopPropagation();
+        }
+    });
+
+    function resetElement(element) {
+        element.style.color = '';
+        element.style.backgroundColor = '';
+        element.style.fontFamily = '';
+        element.style.fontSize = '';
+        element.style.borderRadius = '';
+        element.style.boxShadow = '';
+        element.style.opacity = '';
+        element.style.backgroundImage = '';
+        element.style.transform = '';
+        element.style.textShadow = '';
+    }
+
+    function deselectAllElements() {
+        const elements = document.querySelectorAll('.selected-element');
+        elements.forEach(element => {
+            element.classList.remove('selected-element');
+        });
+        selectedElement = null;
+    }
+
+    function selectAllElements() {
+        const allElements = document.querySelectorAll('*');
+        allElements.forEach(element => {
+            element.classList.add('selected-element');
+        });
+        selectedElement = null;
+    }
+
+    // NEW: Function to enter settings mode.
+    // This removes the red and green dots, changes the title to "Help", and replaces the customization UI with a help message.
+    function enterSettingsMode(controlWindow, windowHeader, scrollableContent, customizationUIHTML) {
+        inSettingsMode = true;
+        // Hide red and green dots
+        windowHeader.querySelector('.red').style.display = 'none';
+        windowHeader.querySelector('.green').style.display = 'none';
+        // Change the title to "Help"
+        const titleElem = controlWindow.querySelector('.title');
+        titleElem.innerText = 'Help';
+        // Replace the customization UI with a help message that lists one feature per bullet point
+        scrollableContent.innerHTML = "<div class='input-group'><label>Welcome to the Web Element Customizer Help</label><p>This script allows you to modify the appearance of elements on any website in real time. The features include:</p><ul><li><strong>Feature 1: Appearance Customization</strong> – Change text color.</li><li><strong>Feature 2: Background Customization</strong> – Change background color.</li><li><strong>Feature 3: Font Customization</strong> – Change font family.</li><li><strong>Feature 4: Text Size Adjustment</strong> – Change text size.</li><li><strong>Feature 5: Border Radius Adjustment</strong> – Change border radius.</li><li><strong>Feature 6: Scaling</strong> – Scale elements up or down.</li><li><strong>Feature 7: Image Replacement (Upload)</strong> – Replace element content with an uploaded image.</li><li><strong>Feature 8: Image Replacement (URL)</strong> – Replace element content by setting a background image via URL.</li><li><strong>Feature 9: Video Replacement</strong> – Replace element content with a YouTube video.</li><li><strong>Feature 10: Text Shadow Effects</strong> – Add text shadows with configurable horizontal offset, vertical offset, blur radius, and color.</li></ul><p>Please note that this is a beta version. You may experience some bugs. I am aware of these issues and am actively working to fix them. Enjoy customizing your website!</p></div>";
+    }
+
+    // NEW: Function to exit settings mode.
+    // This restores the original customization UI and the red/green dots, and changes the title back.
+    function exitSettingsMode(controlWindow, windowHeader, scrollableContent, customizationUIHTML) {
+        inSettingsMode = false;
+        // Restore red and green dots
+        windowHeader.querySelector('.red').style.display = '';
+        windowHeader.querySelector('.green').style.display = '';
+        // Change the title back to the original "Customize - [website name]" format.
+        const domain = window.location.hostname;
+        const titleElem = controlWindow.querySelector('.title');
+        titleElem.innerText = `Customize - ${domain}`;
+        // Restore the customization UI
+        scrollableContent.innerHTML = customizationUIHTML;
+        // Reattach all the customization event listeners to the restored UI
+        setupCustomizationListeners(controlWindow);
+    }
+})();
